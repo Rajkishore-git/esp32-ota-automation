@@ -1,4 +1,4 @@
-name: Build and Deploy Firmware OTA
+name: OTA Deploy
 
 on:
   push:
@@ -6,57 +6,44 @@ on:
       - main
 
 jobs:
-  build-and-deploy:
+  build-and-serve:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repo
-      uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-    - name: Install Arduino CLI
-      run: |
-        curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh
-        echo "${PWD}/bin" >> $GITHUB_PATH
+      - name: Set up Python HTTP range server
+        run: |
+          pip install rangehttpserver
 
-    - name: Install ESP32 core
-      run: |
-        arduino-cli core update-index
-        arduino-cli core install esp32:esp32
+      - name: Install Arduino CLI
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh
+          echo "${PWD}/bin" >> $GITHUB_PATH
 
-    - name: Compile firmware
-      run: |
-        arduino-cli compile --fqbn esp32:esp32:esp32s3 ./src
+      - name: Set up ESP32 core
+        run: |
+          arduino-cli config init
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32
 
-    - name: Start Python HTTP server in background
-      run: |
-        nohup python3 -m http.server 8000 --directory ./src/build/esp32.esp32.esp32s3/ > server.log 2>&1 &
+      - name: Compile sketch
+        run: |
+          arduino-cli compile \
+            --fqbn esp32:esp32:esp32s3:esp32s3_dev \
+            --output-dir build \
+            src/led_blink.ino
 
-    - name: Expose HTTP server via Serveo
-      run: |
-        sudo apt-get install -y openssh-client
-        ssh -o StrictHostKeyChecking=no -R 80:localhost:8000 serveo.net &
-        sleep 15
+      - name: Start HTTP server in background
+        run: |
+          nohup python3 -m http.server --directory build 8080 &
+          sleep 5
 
-    - name: Extract Serveo URL
-      id: get-url
-      run: |
-        URL=$(curl -s https://serveo.net/status | grep -Eo 'https?://[a-zA-Z0-9.-]+serveo.net' | head -n 1)
-        echo "OTA_URL=$URL/firmware.bin" >> $GITHUB_ENV
-        echo "Firmware will be served from: $URL/firmware.bin"
-
-    - name: Rename binary to firmware.bin
-      run: |
-        cp ./src/build/esp32.esp32.esp32s3/src.ino.bin ./src/build/esp32.esp32.esp32s3/firmware.bin
-
-    - name: Publish OTA URL to MQTT
-      run: |
-        pip install paho-mqtt
-        python3 -c "
-import paho.mqtt.publish as publish
-publish.single(
-    topic='esp32/ota',
-    payload='${{ env.OTA_URL }}',
-    hostname='test.mosquitto.org',
-    port=1883
-)
-"
+      - name: Publish OTA URL via MQTT
+        run: |
+          sudo apt-get install -y mosquitto-clients
+          IP=$(curl -s ifconfig.me)
+          URL="http://$IP:8080/led_blink.ino.bin"
+          echo "Publishing OTA URL: $URL"
+          mosquitto_pub -h broker.hivemq.com -t ota/update/url -m "$URL"
