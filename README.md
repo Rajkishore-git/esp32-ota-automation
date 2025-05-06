@@ -1,4 +1,4 @@
-# esp32-ota-automation
+
 # ESP32 OTA Automation
 
 This repo holds an automated pipeline that:
