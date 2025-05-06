@@ -1,4 +1,4 @@
-name: ESP32 OTA Deploy
+name: Build and Deploy Firmware OTA
 
 on:
   push:
@@ -6,63 +6,57 @@ on:
       - main
 
 jobs:
-  build-and-publish:
+  build-and-deploy:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v3
+    - name: Checkout repo
+      uses: actions/checkout@v3
 
-      - name: Install Arduino CLI
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh
-          echo "Adding Arduino CLI to PATH"
-          export PATH="${PWD}/bin:$PATH"
-          arduino-cli core update-index
-          arduino-cli core install esp32:esp32
-        shell: bash
+    - name: Install Arduino CLI
+      run: |
+        curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh
+        echo "${PWD}/bin" >> $GITHUB_PATH
 
-      - name: Compile firmware
-        run: |
-          # Ensure Arduino CLI is on PATH
-          export PATH="${PWD}/bin:$PATH"
-          # List files for debugging
-          ls -R .
-          # Compile the exact .ino file
-          arduino-cli compile \
-            --fqbn esp32:esp32:esp32s3:ESP32S3_DEV \
-            --output-dir build ./src/led_blink.ino
-          mv build/*.bin firmware.bin
+    - name: Install ESP32 core
+      run: |
+        arduino-cli core update-index
+        arduino-cli core install esp32:esp32
 
-      - name: Serve firmware locally
-        run: |
-          python3 -m http.server 8000 &
-        shell: bash
+    - name: Compile firmware
+      run: |
+        arduino-cli compile --fqbn esp32:esp32:esp32s3 ./src
 
-      - name: Open Serveo tunnel
-        run: |
-          mkdir -p ~/.ssh
-          printf 'Host serveo.net\n  StrictHostKeyChecking no\n' >> ~/.ssh/config
-          ssh -o ServerAliveInterval=60 -R 80:localhost:8000 serveo.net > serveo.log 2>&1 &
-          sleep 5
-          PUBLIC_URL=$(grep -Eo 'https://[a-z0-9]+\\.serveo\\.net' serveo.log | head -n1)
-          echo "PUBLIC_URL=${PUBLIC_URL}/firmware.bin" >> $GITHUB_ENV
-        shell: bash
+    - name: Start Python HTTP server in background
+      run: |
+        nohup python3 -m http.server 8000 --directory ./src/build/esp32.esp32.esp32s3/ > server.log 2>&1 &
 
-      - name: Notify ESP32 via MQTT
-        env:
-          MQTT_BROKER: ${{ secrets.MQTT_BROKER }}
-          MQTT_USER: ${{ secrets.MQTT_USER }}
-          MQTT_PASS: ${{ secrets.MQTT_PASS }}
-          PUBLIC_URL: ${{ env.PUBLIC_URL }}
-        run: |
-          python3 - <<EOF
-          import paho.mqtt.publish as publish
-          publish.single(
-            "esp32/ota/update",
-            "${PUBLIC_URL}",
-            hostname="${MQTT_BROKER}",
-            auth={'username': "${MQTT_USER}", 'password': "${MQTT_PASS}"}
-          )
-          print("Published OTA URL:", "${PUBLIC_URL}")
-          EOF
-        shell: bash
+    - name: Expose HTTP server via Serveo
+      run: |
+        sudo apt-get install -y openssh-client
+        ssh -o StrictHostKeyChecking=no -R 80:localhost:8000 serveo.net &
+        sleep 15
+
+    - name: Extract Serveo URL
+      id: get-url
+      run: |
+        URL=$(curl -s https://serveo.net/status | grep -Eo 'https?://[a-zA-Z0-9.-]+serveo.net' | head -n 1)
+        echo "OTA_URL=$URL/firmware.bin" >> $GITHUB_ENV
+        echo "Firmware will be served from: $URL/firmware.bin"
+
+    - name: Rename binary to firmware.bin
+      run: |
+        cp ./src/build/esp32.esp32.esp32s3/src.ino.bin ./src/build/esp32.esp32.esp32s3/firmware.bin
+
+    - name: Publish OTA URL to MQTT
+      run: |
+        pip install paho-mqtt
+        python3 -c "
+import paho.mqtt.publish as publish
+publish.single(
+    topic='esp32/ota',
+    payload='${{ env.OTA_URL }}',
+    hostname='test.mosquitto.org',
+    port=1883
+)
+"
