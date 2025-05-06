@@ -23,12 +23,15 @@ jobs:
 
       - name: Compile firmware
         run: |
+          # Ensure Arduino CLI is on PATH
           export PATH="${PWD}/bin:$PATH"
+          # List files for debugging
+          ls -R .
+          # Compile the exact .ino file
           arduino-cli compile \
             --fqbn esp32:esp32:esp32s3:ESP32S3_DEV \
-            --output-dir build src/led_blink.ino
+            --output-dir build ./src/led_blink.ino
           mv build/*.bin firmware.bin
-        shell: bash
 
       - name: Serve firmware locally
         run: |
