@@ -1,3 +1,4 @@
+#define TINY_GSM_MODEM_SIM800
 #include <Arduino.h>
 #include <TinyGsmClient.h>
 #include <PubSubClient.h>
