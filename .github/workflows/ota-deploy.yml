@@ -46,17 +46,14 @@ jobs:
         nohup python3 -m http_range_server --directory build --port 8080 &
         ssh -o StrictHostKeyChecking=no -R 80:localhost:8080 serveo.net &
         sleep 10
-        echo "Serveo started"
 
     - name: Publish firmware URL to MQTT
       run: |
         pip install paho-mqtt
-        echo "
+        python3 - <<EOF
 import paho.mqtt.publish as publish
-import time
 
-url = 'http://<your-serveo-subdomain>.serveo.net/src.ino.bin'
-publish.single('esp32/ota', url, hostname='your-mqtt-broker.com', port=1883)
-print('Published OTA firmware URL to MQTT:', url)
-" > send_mqtt.py
-        python3 send_mqtt.py
+firmware_url = "http://<your-subdomain>.serveo.net/src.ino.bin"
+publish.single("esp32/ota", firmware_url, hostname="your-mqtt-broker.com", port=1883)
+print("Published OTA firmware URL:", firmware_url)
+EOF
