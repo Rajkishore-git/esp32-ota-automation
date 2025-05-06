@@ -4,46 +4,59 @@ on:
   push:
     branches:
       - main
+    paths:
+      - 'src/**'
+      - '.github/workflows/ota-deploy.yml'
 
 jobs:
-  build-and-serve:
+  build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+    - name: Checkout repository
+      uses: actions/checkout@v3
 
-      - name: Set up Python HTTP range server
-        run: |
-          pip install rangehttpserver
+    - name: Set up Python and pip
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
 
-      - name: Install Arduino CLI
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh
-          echo "${PWD}/bin" >> $GITHUB_PATH
+    - name: Install Arduino CLI
+      run: |
+        curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh
+        echo "${PWD}/bin" >> $GITHUB_PATH
 
-      - name: Set up ESP32 core
-        run: |
-          arduino-cli config init
-          arduino-cli core update-index
-          arduino-cli core install esp32:esp32
+    - name: Set up ESP32 core
+      run: |
+        arduino-cli config init
+        arduino-cli config add board_manager.additional_urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+        arduino-cli core update-index
+        arduino-cli core install esp32:esp32
 
-      - name: Compile sketch
-        run: |
-          arduino-cli compile \
-            --fqbn esp32:esp32:esp32s3:esp32s3_dev \
-            --output-dir build \
-            src/led_blink.ino
+    - name: Compile firmware
+      run: |
+        arduino-cli compile \
+          --fqbn esp32:esp32:esp32s3:esp32s3_dev \
+          --output-dir build \
+          src/src.ino
 
-      - name: Start HTTP server in background
-        run: |
-          nohup python3 -m http.server --directory build 8080 &
-          sleep 5
+    - name: Start HTTP range server with Serveo
+      run: |
+        pip install http-range-server
+        nohup python3 -m http_range_server --directory build --port 8080 &
+        ssh -o StrictHostKeyChecking=no -R 80:localhost:8080 serveo.net &
+        sleep 10
+        echo "Serveo started"
 
-      - name: Publish OTA URL via MQTT
-        run: |
-          sudo apt-get install -y mosquitto-clients
-          IP=$(curl -s ifconfig.me)
-          URL="http://$IP:8080/led_blink.ino.bin"
-          echo "Publishing OTA URL: $URL"
-          mosquitto_pub -h broker.hivemq.com -t ota/update/url -m "$URL"
+    - name: Publish firmware URL to MQTT
+      run: |
+        pip install paho-mqtt
+        echo "
+import paho.mqtt.publish as publish
+import time
+
+url = 'http://<your-serveo-subdomain>.serveo.net/src.ino.bin'
+publish.single('esp32/ota', url, hostname='your-mqtt-broker.com', port=1883)
+print('Published OTA firmware URL to MQTT:', url)
+" > send_mqtt.py
+        python3 send_mqtt.py
