@@ -1,0 +1,3 @@
+sketch: src/led_blink.ino
+board: esp32:esp32:esp32s3
+output: build
