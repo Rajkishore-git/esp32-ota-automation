@@ -15,19 +15,24 @@ jobs:
       - name: Install Arduino CLI
         run: |
           curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh
-          echo "${PWD}/bin" >> $GITHUB_PATH
+          echo "Adding Arduino CLI to PATH"
+          export PATH="${PWD}/bin:$PATH"
           arduino-cli core update-index
           arduino-cli core install esp32:esp32
+        shell: bash
 
       - name: Compile firmware
         run: |
+          export PATH="${PWD}/bin:$PATH"
           arduino-cli compile \
             --fqbn esp32:esp32:esp32s3:ESP32S3_DEV \
             --output-dir build src/led_blink.ino
           mv build/*.bin firmware.bin
+        shell: bash
 
       - name: Serve firmware locally
-        run: python3 -m http.server 8000 &
+        run: |
+          python3 -m http.server 8000 &
         shell: bash
 
       - name: Open Serveo tunnel
@@ -36,7 +41,7 @@ jobs:
           printf 'Host serveo.net\n  StrictHostKeyChecking no\n' >> ~/.ssh/config
           ssh -o ServerAliveInterval=60 -R 80:localhost:8000 serveo.net > serveo.log 2>&1 &
           sleep 5
-          PUBLIC_URL=$(grep -Eo 'https://[a-z0-9]+\.serveo\.net' serveo.log | head -n1)
+          PUBLIC_URL=$(grep -Eo 'https://[a-z0-9]+\\.serveo\\.net' serveo.log | head -n1)
           echo "PUBLIC_URL=${PUBLIC_URL}/firmware.bin" >> $GITHUB_ENV
         shell: bash
 
